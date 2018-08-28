@@ -1,0 +1,186 @@
+---
+title: "Analysis of the Impact of US Storms - 1950 to 2011"
+output:
+  pdf_document: default
+  html_document: default
+date: "August 21, 2018"
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Synopsis
+
+This analysis looks at the impact of US Storms on Population Health (Deaths and Injuries) and on Financial Cost (Property and Crop Damage).  Time is an important consideration due to geographical changes in farming, property type/location and indeed on weather patterns.
+
+Raw Empirical analysis shows typcially Tornado and Flood style events are most impactful on Health and Property, but more recently hot weather impacts are more prevalent such as Heat and Wildfire.
+
+##Data Processing
+
+Data provided have Injuries, Deaths, Crop Damages and Propoerty Damages (measured in $/millions) and a variety of other location data.
+
+Data collection and FAQ notes are available below:
+<https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf>
+
+<https://d396qusza40orc.cloudfront.net/repdata%2Fpe-er2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf>
+
+The data can be downloaded here:  
+<https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2>
+
+The data are obtained and extracted below with some exploration:
+```{r download, cache=TRUE}
+setwd("C:/Nick/07 R/6JohnHopkins/5 Reproducible Research/Assignment2")
+stormData<-read.csv("repdata%2Fdata%2FStormData.csv.bz2")
+n<-nrow(stormData)  #902,297 records
+t<-data.frame(table(stormData$EVTYPE))  
+nt<-nrow(t)   #985 event types, need to group
+head(stormData) #need to select and process some fields too
+```
+
+Some fields will need pre-processing including  
+ - Multiplying Crop and Property values which are in mixed precision (thousands, millions, billions)  
+ - Creating modellable Dates from the machine date format (event year, banded-10 event year, event Month|Year)  
+ - Creating the "propCost"" variable as the sum of Crop and Property damages to allow single analysis  
+ - Creating the "healthCost"" variable as the amalgam of Injury and Death variables to allow single analysis.  For the purposes of an initial view, the spurious multiple of 10x has been applied to the Deaths to give them relatively more importance in the results as compared to Injuries.  This is not a statement of fact but a necessary choice for a single analysis  
+
+```{r variables}
+stormData$CROPDMG2 <- ifelse(toupper(stormData$CROPDMGEXP)=="K", stormData$CROPDMG/1000, ifelse(toupper(stormData$CROPDMGEXP)=="B",stormData$CROPDMG*1000,stormData$CROPDMG))
+stormData$PROPDMG2 <- ifelse(toupper(stormData$PROPDMGEXP)=="K", stormData$PROPDMG/1000, ifelse(toupper(stormData$PROPDMGEXP)=="B",stormData$PROPDMG*1000,stormData$PROPDMG))
+stormData$axDate <- as.Date(stormData$BGN_DATE,'%m/%d/%Y')
+stormData$axYear <- as.numeric(format(stormData$axDate, '%Y'))
+stormData$axYearBand<-stormData$axYear-(stormData$axYear-10*floor(stormData$axYear/10)) #mod10 function to band axYear in 10s
+stormData$axMonth <- paste(format(stormData$axDate, '%m'),format(stormData$axDate, '%Y'),sep=" ")
+stormData$healthCost <- (stormData$FATALITIES*10+stormData$INJURIES)
+stormData$propCost <- (stormData$PROPDMG2+stormData$CROPDMG2)
+```
+
+The EVTYPE variable is very rich but contains maybe 900+ individual event types, some of which confound and would make finding a concrete conclusion tricky.
+
+The below code would output the frequency against the words in the event description in order to identify some fundamental groups.  These could be clustered using some tree basis and/or a text-mining package.  In this case, some words were selected as below to exclude and then the main events were grouped into some reasonable functional groups.  The variables and the code to analyse the raw data can be reproduced below.
+
+
+The first step is to gain an intial list of words and remove anything not-particularly useful in the top 100 words.  Once complete, present the frquency again and identify words to group:
+
+```{r textanalysis}
+#clean the EVTYPE field into groups
+t1<-toupper(stormData$EVTYPE)
+t1 <- strsplit(t1, " ", fixed = TRUE); t1 <- unlist(t1); 
+#t1[1:100,]   #identify some words to drop.  This has been excluded due to size but could easily be run on a local instance of R.
+strip<-c("FLASH","HEAVY","HIGH","WILD/FOREST","MARINE","WEATHER","CLOUD","STRONG","URBAN/SML","EXTREME","EXCESSIVE","DENSE","WEATHER/MIX","COASTAL","RIP","TROPICAL","CURRENT","DRY","UNSEASONABLY","LIGHT","AND","OF")
+t2 <- t1[!t1 %in% strip]
+t2 <- table(t2);
+t2<-as.data.frame(t2);
+names(t2)=c("WORD", "FREQ");
+t2 <- t2[order(-t2$FREQ),]
+#t2[1:100,] #identify synonyms from the largest word frequencies to help map the fields together.  This has been excluded due to size but could easily be run on a local instance of R.
+```
+
+The functional groups can be created by searching for the words in the full dataset.  The dataset is separated to ensure a distinct mapping is produced.
+
+The "event" key is added before the set is appended and slimmed down to relevant modeling variables.
+
+A quick summary is provided to show the initial view of impactful datasets by Health impact and Crop Damage.
+
+```{r splitset}
+#now create the final mapping on the main dataset
+c1<-c("GUSTY|WIND|WINDS|WINDSS|HURRICANE")
+c2<-c("HAIL|WIND/HAIL|WINDS/HAIL")	
+c3<-c("DOWNBURST|SQUALLS|MICROBURST|LIGHTING|THUNDERSTORM|TSTM|LIGHTNING|STORM|RAIN|PRECIPITATION|RAINS|RAINFALL|RAINS/FLOODING|SQUALL|THUNDERSTORMS")
+c4<-c("FLOOD|FLOODING|FLD|FLOOD/FLOOD|FLOOD/RAIN/WINDS|FLOODIN|FLOODS|FLOODING/FLOOD|SEICHE")
+c5<-c("TORNADO|WATERSPOUT|FUNNEL|FUNNELS|TYPHOON|WATERSPOUTS|WATERSPOUT/TORNADO|WATERSPOUT/|WATERSPOUT-|SNOWFALL|ICE/SNOW|SNOW/FLURRIES")
+c6<-c("SNOW|BLIZZARD|SNOW/BLOWING|SNOW/FREEZING|SNOW/HIGH|SNOW/ICE|SNOW/SLEET|SNOW/SLEET/FREEZING|RAIN/SLEET|RAIN/SNOW")
+c7<-c("COLD|ICE|CHILL|COLD/WIND|FROST/FREEZE|WINTER|FREEZING|COOL|ICY|HYPOTHERMIA/EXPOSURE|FREEZE|WINTRY|FROST|SLEET")
+c8<-c("WILDFIRE|FIRE|FIRES|WILDFIRES")
+c9<-c("HIGH TEMPERATURE|HIGH TEMPERATURES|HOT|WARM|WARMTH|HEAT")
+c10<-c("DROUGHT|DROUGHT/EXCESSIVE|DRYNESS")
+c11<-c("WAVES|CURRENTS|TIDE|SURF/HIGH|WAVE|LANDSLUMP|TIDES|SURF|CURRENTS/HEAVY|TIDAL|SWELLS|TSUNAMI")
+c12<-c("LANDSLIDE|MUDSLIDES|LANDSLIDES|MUDSLIDE")
+c13<-c("AVALANCHE|AVALANCE|AVALANCH")
+c14<-c("FOG")
+
+sD1<-stormData[grepl(c1, stormData$EVTYPE),];res<-stormData[!grepl(c1, stormData$EVTYPE),]
+sD2<-res[grepl(c2, res$EVTYPE),];res<-res[!grepl(c2, res$EVTYPE),]
+sD3<-res[grepl(c3, res$EVTYPE),];res<-res[!grepl(c3, res$EVTYPE),]
+sD4<-res[grepl(c4, res$EVTYPE),];res<-res[!grepl(c4, res$EVTYPE),]
+sD5<-res[grepl(c5, res$EVTYPE),];res<-res[!grepl(c5, res$EVTYPE),]
+sD6<-res[grepl(c6, res$EVTYPE),];res<-res[!grepl(c6, res$EVTYPE),]
+sD7<-res[grepl(c7, res$EVTYPE),];res<-res[!grepl(c7, res$EVTYPE),]
+sD8<-res[grepl(c8, res$EVTYPE),];res<-res[!grepl(c8, res$EVTYPE),]
+sD9<-res[grepl(c9, res$EVTYPE),];res<-res[!grepl(c9, res$EVTYPE),]
+sD10<-res[grepl(c10, res$EVTYPE),];res<-res[!grepl(c10, res$EVTYPE),]
+sD11<-res[grepl(c11, res$EVTYPE),];res<-res[!grepl(c11, res$EVTYPE),]
+sD12<-res[grepl(c12, res$EVTYPE),];res<-res[!grepl(c12, res$EVTYPE),]
+sD13<-res[grepl(c13, res$EVTYPE),];res<-res[!grepl(c13, res$EVTYPE),]
+sD14<-res[grepl(c14, res$EVTYPE),];sD15<-res[!grepl(c14, res$EVTYPE),]
+
+
+#put the indicator and re-group (we separated to avoid overlapping mappings)
+sD1$event<-1;sD2$event<-2;sD3$event<-3;sD4$event<-4;sD5$event<-5;sD6$event<-6;
+sD7$event<-7;sD8$event<-8;sD9$event<-9;sD10$event<-10;sD11$event<-11;
+sD12$event<-12;sD13$event<-13;sD14$event<-14;sD15$event<-15
+sData<-rbind(sD1, sD2, sD3, sD4, sD5, sD6, sD7, sD8, sD9, sD10, sD11, sD12, sD13, sD14, sD15)
+sData<-sData[,c("STATE__","axYear","axYearBand","axMonth","healthCost","propCost","event","INJURIES","FATALITIES","PROPDMG2","CROPDMG2")]
+
+#costs for property and health.
+#tough to value a human life verses human injury, but in principle death is a greater tragedy 
+#i've applied some spurious multiple of 10x to help support the evealuation
+s1<-aggregate(sData$healthCost, by=list(Category=sData$event), FUN=sum)
+s2<-aggregate(sData$propCost, by=list(Category=sData$event), FUN=sum)
+```
+
+Initial plots of the data show it is quite spread which is typical of naturally occuring data.  Instead, I will output the log charts which look more even.  This suggests analysis/modelling should be done in log-space.  
+
+```{r plot1}
+#initial plots showed the data is quite spread whcih is typical of naturally occuring data
+#par(mfrow=c(2,1))
+#hist(sData$healthCost)
+#hist(sData$propCost)
+
+#move to a log plot shows a better picture which highlights that the models should be on that
+#basis too
+par(mfrow=c(1,2))
+hist(log(sData$healthCost))
+hist(log(sData$propCost))
+```
+
+Now the data is in good shape, excluding zero responses the models are applied.  Reviewing the output and the outliers iteratively, there were additional groupings required to obtain results.  There are still some outliers but given the extreme nature of events I believe this is necessary.
+
+The final models show mostly credible event groups (certainly the higher risk groups were significant) and the banded event year (axYearBanded) look reasonable.
+
+```{r models}
+x1<-sData$healthCost==0
+x2<-sData$propCost==0
+#only 1 obs in Drought (event==10) so group with "other" 15
+temp1<-sData[!x1,]
+temp1$event<-ifelse(temp1$event==10|temp1$event==14|temp1$event==2, 15, temp1$event)
+m4<-lm(log(healthCost)~factor(axYearBand)+factor(event),data=temp1)
+summary(m4)
+par(mfrow=c(2,2))
+plot(m4)
+
+#outlier in 1950 only now  #634122 (Drought variable is most likely)
+temp2<-sData[!x2,]
+temp2$event<-ifelse(temp2$event==13|temp2$event==10|temp2$event==14, 15, temp2$event)
+#group avalanche, fog 14 and Avalanche 13 with other 15
+m5<-lm(log(propCost)~factor(axYearBand)+factor(event),data=temp2)
+summary(m5)
+
+par(mfrow=c(2,2))
+plot(m5)
+```
+
+##Results
+
+###Q1. Population Health
+
+Empirically {WIND, HAIL, THUNDERSTORM} are the primpary impacts on the Health Impact score I created.  When the period of time is taken into account (using log-linear-model m4) these are less important and {HEAT, COLD, LANDSLIDE} become the most impactful events.
+
+###Q2. Property Damage
+
+Once again, the empirical results differ from the model with {FLOOD, WIND, THUNDERSTORM} as the major imapcts on a one way.  With the time effect (from log-linear model m5) we see that {WILDFIRE, OCEAN, TORNADO} are the most impactful.
+
+###General Summary
+
+Heat and Wildfire are the more impactful weather events in the US in recent years.  The analysis is fairly basic at this stage but it suggests to clear courses of action:
+ 1. Working with the data collection teams to create a better functional mapping of the event types (potentially with more simple/clearer groupings to aid analysis or a more enhanced text-mining approach)
+ 2. Consideration of climate change impacts on the event types with the most risk to see if there are socio-demographic impacts and resourcing decisions that could be considered.
